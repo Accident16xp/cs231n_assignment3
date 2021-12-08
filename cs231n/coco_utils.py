@@ -39,6 +39,7 @@ def load_coco_data(base_dir=BASE_DIR, max_train=None, pca_features=True):
     data["train_urls"] = train_urls
 
     val_url_file = os.path.join(base_dir, "val2014_urls.txt")
+    #val_url_file = os.path.join(base_dir, test_url.txt")
     with open(val_url_file, "r") as f:
         val_urls = np.asarray([line.strip() for line in f])
     data["val_urls"] = val_urls

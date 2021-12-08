@@ -323,7 +323,7 @@ def lstm_step_forward(x, prev_h, prev_c, Wx, Wh, b):
 
     The input data has dimension D, the hidden state has dimension H, and we use
     a minibatch size of N.
-
+    输入数据的维度为D，隐藏状态的维度为H
     Note that a sigmoid() function has already been provided for you in this file.
 
     Inputs:
@@ -331,8 +331,11 @@ def lstm_step_forward(x, prev_h, prev_c, Wx, Wh, b):
     - prev_h: Previous hidden state, of shape (N, H)
     - prev_c: previous cell state, of shape (N, H)
     - Wx: Input-to-hidden weights, of shape (D, 4H)
+     Wx为输入-》隐层的维度，N*D D*4H 隐层即为 N*4H
     - Wh: Hidden-to-hidden weights, of shape (H, 4H)
+     Wh为隐层到隐层的维度  N*4H 
     - b: Biases, of shape (4H,)
+     b为4H维的偏置值
 
     Returns a tuple of:
     - next_h: Next hidden state, of shape (N, H)
@@ -346,7 +349,20 @@ def lstm_step_forward(x, prev_h, prev_c, Wx, Wh, b):
     #############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
 
-    pass
+    N,H=prev_h.shape
+    A=x.dot(Wx)+prev_h.dot(Wh)+b
+    #得到了N*4H的矩阵
+    ai = A[:,0:H]
+    af = A[:,H: 2*H]
+    ao = A[:,2*H : 3*H]
+    ag = A[:,3*H : 4*H]
+    i = sigmoid(ai)
+    f = sigmoid(af)
+    o = sigmoid(ao)
+    g = np.tanh(ag)
+    next_c = np.multiply(f,prev_c) + np.multiply(i,g)
+    next_h = np.multiply(o,np.tanh(next_c))
+    cache = (x,prev_h,prev_c,i,f,o,g,Wx,Wh,next_c,A)
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
@@ -360,11 +376,13 @@ def lstm_step_backward(dnext_h, dnext_c, cache):
     """Backward pass for a single timestep of an LSTM.
 
     Inputs:
+    导数以及缓存
     - dnext_h: Gradients of next hidden state, of shape (N, H)
     - dnext_c: Gradients of next cell state, of shape (N, H)
     - cache: Values from the forward pass
 
     Returns a tuple of:
+     相关的各个导数
     - dx: Gradient of input data, of shape (N, D)
     - dprev_h: Gradient of previous hidden state, of shape (N, H)
     - dprev_c: Gradient of previous cell state, of shape (N, H)
@@ -375,13 +393,53 @@ def lstm_step_backward(dnext_h, dnext_c, cache):
     dx, dprev_h, dprev_c, dWx, dWh, db = None, None, None, None, None, None
     #############################################################################
     # TODO: Implement the backward pass for a single timestep of an LSTM.       #
-    #                                                                           #
+    #                                        #
     # HINT: For sigmoid and tanh you can compute local derivatives in terms of  #
     # the output value from the nonlinearity.                                   #
     #############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-
-    pass
+    #利用前边的公式计算即可
+    N,H = dnext_h.shape
+    prev_x,prev_h,prev_c,i,f,o,g,Wx,Wh,nc,A = cache
+    ai = A[:,0:H]
+    af = A[:,H: 2*H]
+    ao = A[:,2*H : 3*H]
+    ag = A[:,3*H : 4*H]
+    
+    #计算到c_t-1的梯度
+    dc_c = np.multiply(dnext_c,f)
+    dc_h_temp = np.multiply(dnext_h,o)
+    temp = np.ones_like(nc) - np.square(np.tanh(nc))
+    temp2 = np.multiply(temp,f)
+    dprev_c = np.multiply(temp2,dc_h_temp) + dc_c
+    
+    #计算(dE/dh)(dh/dc)
+    dc_from_h = np.multiply(dc_h_temp,temp)
+    dtotal_c = dc_from_h + dnext_c
+    
+    #计算到o,f,i,g的梯度
+    tempo = np.multiply(np.tanh(nc),dnext_h)
+    tempf = np.multiply(dtotal_c,prev_c)
+    tempi = np.multiply(dtotal_c,g)
+    tempg = np.multiply(dtotal_c,i)
+    
+    #计算到ao,ai,af,ag的梯度
+    tempao = np.multiply(tempo,np.multiply(o,np.ones_like(o) - o))
+    tempai = np.multiply(tempi,np.multiply(i,np.ones_like(i) - i))
+    tempaf = np.multiply(tempf,np.multiply(f,np.ones_like(f) - f))
+    dtanhg = np.ones_like(ag) - np.square(np.tanh(ag))
+    tempag = np.multiply(tempg,dtanhg)
+    
+    #计算各参数的梯度
+    Temp = np.concatenate((tempai,tempaf,tempao,tempag),axis = 1)
+    dx = Temp.dot(Wx.T)
+    dprev_h = Temp.dot(Wh.T)
+    xt = prev_x.T
+    dWx = xt.dot(Temp)
+    ht = prev_h.T
+    dWh = ht.dot(Temp)
+    db = np.sum(Temp,axis = 0).T
+    
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
@@ -420,7 +478,36 @@ def lstm_forward(x, h0, Wx, Wh, b):
     #############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
 
-    pass
+    N,T,D = x.shape
+    N,H = h0.shape
+    prev_h = h0
+    
+    #for backward
+    h3 = np.empty([N,T,H])
+    h4 = np.empty([N,T,H])
+    I = np.empty([N,T,H])
+    F = np.empty([N,T,H])
+    O = np.empty([N,T,H])
+    G = np.empty([N,T,H])
+    NC = np.empty([N,T,H])
+    AT = np.empty([N,T,4 * H])
+    h2 = np.empty([N,T,H])
+    prev_c = np.zeros_like(prev_h)
+    
+    for i in range(T):
+        h3[:,i,:] = prev_h
+        h4[:,i,:] = prev_c
+        next_h,next_c,cache_temp = lstm_step_forward(x[:,i,:],prev_h,prev_c,Wx,Wh,b)
+        prev_h = next_h
+        prev_c = next_c #更新隐藏层状态
+        h2[:,i,:] = prev_h #用来记录状态
+        I[:,i,:] = cache_temp[3]
+        F[:,i,:] = cache_temp[4]
+        O[:,i,:] = cache_temp[5]
+        G[:,i,:] = cache_temp[6]
+        NC[:,i,:] = cache_temp[9]
+        AT[:,i,:] = cache_temp[10]
+    cache = (x,h3,h4,I,F,O,G,Wx,Wh,NC,AT)
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
