@@ -4,6 +4,22 @@
 import numpy as np
 
 
+def getIFOG(ifog, which):
+    H = ifog.shape[1]//4
+    indx = {char:i*H for i, char in enumerate("ifog")}
+    if which == "t" or which == "T":
+        for char in indx:
+            if char == "g":
+                ifog[:, indx[char]:indx[char]+H] = np.tanh(ifog[:, indx[char]:indx[char]+H])
+            else:
+                ifog[:, indx[char]:indx[char]+H] = sigmoid(ifog[:, indx[char]:indx[char]+H])
+        return ifog
+    else:
+        if which == "g":
+            return ifog[:, indx[which]:indx[which]+H]
+        else:
+            return ifog[:, indx[which]:indx[which]+H]
+
                    
 
                  
@@ -399,47 +415,20 @@ def lstm_step_backward(dnext_h, dnext_c, cache):
     #############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     #利用前边的公式计算即可
-    N,H = dnext_h.shape
-    prev_x,prev_h,prev_c,i,f,o,g,Wx,Wh,nc,A = cache
-    ai = A[:,0:H]
-    af = A[:,H: 2*H]
-    ao = A[:,2*H : 3*H]
-    ag = A[:,3*H : 4*H]
-    
-    #计算到c_t-1的梯度
-    dc_c = np.multiply(dnext_c,f)
-    dc_h_temp = np.multiply(dnext_h,o)
-    temp = np.ones_like(nc) - np.square(np.tanh(nc))
-    temp2 = np.multiply(temp,f)
-    dprev_c = np.multiply(temp2,dc_h_temp) + dc_c
-    
-    #计算(dE/dh)(dh/dc)
-    dc_from_h = np.multiply(dc_h_temp,temp)
-    dtotal_c = dc_from_h + dnext_c
-    
-    #计算到o,f,i,g的梯度
-    tempo = np.multiply(np.tanh(nc),dnext_h)
-    tempf = np.multiply(dtotal_c,prev_c)
-    tempi = np.multiply(dtotal_c,g)
-    tempg = np.multiply(dtotal_c,i)
-    
-    #计算到ao,ai,af,ag的梯度
-    tempao = np.multiply(tempo,np.multiply(o,np.ones_like(o) - o))
-    tempai = np.multiply(tempi,np.multiply(i,np.ones_like(i) - i))
-    tempaf = np.multiply(tempf,np.multiply(f,np.ones_like(f) - f))
-    dtanhg = np.ones_like(ag) - np.square(np.tanh(ag))
-    tempag = np.multiply(tempg,dtanhg)
-    
-    #计算各参数的梯度
-    Temp = np.concatenate((tempai,tempaf,tempao,tempag),axis = 1)
-    dx = Temp.dot(Wx.T)
-    dprev_h = Temp.dot(Wh.T)
-    xt = prev_x.T
-    dWx = xt.dot(Temp)
-    ht = prev_h.T
-    dWh = ht.dot(Temp)
-    db = np.sum(Temp,axis = 0).T
-    
+    i, f, o, g, x, Wx, Wh, prev_c, prev_h, next_c = cache
+
+    do = np.tanh(next_c) * dnext_h                        
+    dnext_c += o * (1 - np.tanh(next_c) ** 2) * dnext_h  
+    di, df, dg, dprev_c = (g, prev_c, i, f) * dnext_c     
+    da = np.hstack([i*(1-i)*di, f*(1-f)*df, o*(1-o)*do, (1-g*g)*dg]) 
+
+ 
+    dx = np.dot(da, Wx.T)
+    dWx = np.dot(x.T, da)
+    dprev_h = np.dot(da, Wh.T)
+    dWh = np.dot(prev_h.T, da)
+    db = np.sum(da, axis=0)
+
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
@@ -478,36 +467,20 @@ def lstm_forward(x, h0, Wx, Wh, b):
     #############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
 
-    N,T,D = x.shape
-    N,H = h0.shape
+    N, T, D = x.shape
+    _, H = h0.shape
+    h = np.zeros((N, T, H))
+    c = np.zeros_like(h)
     prev_h = h0
-    
-    #for backward
-    h3 = np.empty([N,T,H])
-    h4 = np.empty([N,T,H])
-    I = np.empty([N,T,H])
-    F = np.empty([N,T,H])
-    O = np.empty([N,T,H])
-    G = np.empty([N,T,H])
-    NC = np.empty([N,T,H])
-    AT = np.empty([N,T,4 * H])
-    h2 = np.empty([N,T,H])
     prev_c = np.zeros_like(prev_h)
-    
-    for i in range(T):
-        h3[:,i,:] = prev_h
-        h4[:,i,:] = prev_c
-        next_h,next_c,cache_temp = lstm_step_forward(x[:,i,:],prev_h,prev_c,Wx,Wh,b)
-        prev_h = next_h
-        prev_c = next_c #更新隐藏层状态
-        h2[:,i,:] = prev_h #用来记录状态
-        I[:,i,:] = cache_temp[3]
-        F[:,i,:] = cache_temp[4]
-        O[:,i,:] = cache_temp[5]
-        G[:,i,:] = cache_temp[6]
-        NC[:,i,:] = cache_temp[9]
-        AT[:,i,:] = cache_temp[10]
-    cache = (x,h3,h4,I,F,O,G,Wx,Wh,NC,AT)
+    for iter_time in range(T):
+        h[:, iter_time, :], c[:, iter_time, :], _ = lstm_step_forward(x[:, iter_time, :], prev_h, prev_c, Wx, Wh, b)
+        prev_h = h[:, iter_time, :]
+        prev_c = c[:, iter_time, :]
+
+    cache = (h0, h, c, Wx, Wh, x, b)
+
+
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
@@ -518,36 +491,40 @@ def lstm_forward(x, h0, Wx, Wh, b):
 
 
 def lstm_backward(dh, cache):
-    """Backward pass for an LSTM over an entire sequence of data.
+  """
+  Backward pass for an LSTM over an entire sequence of data.]
+  Inputs:
+  - dh: Upstream gradients of hidden states, of shape (N, T, H)
+  - cache: Values from the forward pass
+  Returns a tuple of:
+  - dx: Gradient of input data of shape (N, T, D)
+  - dh0: Gradient of initial hidden state of shape (N, H)
+  - dWx: Gradient of input-to-hidden weight matrix of shape (D, 4H)
+  - dWh: Gradient of hidden-to-hidden weight matrix of shape (H, 4H)
+  - db: Gradient of biases, of shape (4H,)
+  """
+  dx, dh0, dWx, dWh, db = None, None, None, None, None
+  #############################################################################
+  # TODO: Implement the backward pass for an LSTM over an entire timeseries.  #
+  # You should use the lstm_step_backward function that you just defined.     #
+  #############################################################################
+  
+  N, T, H = dh.shape
+    D = cache[0][4].shape[1]  # x is (N, D)
+    stepdprev_h, stepdprev_c = np.zeros((N, H)), np.zeros((N, H))
+    dx, dWx, dWh, db = [], np.zeros((D, 4*H)), np.zeros((H, 4*H)), np.zeros(4*H)
+    for t in range(T-1, -1, -1):
+        stepdx, stepdprev_h, stepdprev_c, stepdWx, stepdWh, stepdb = lstm_step_backward(
+              dh[:, t, :] + stepdprev_h, stepdprev_c, cache[t])
+        dx.append(stepdx)
+        dWx, dWh, db = dWx + stepdWx, dWh + stepdWh, db + stepdb
+    dh0 = stepdprev_h
+    dx = np.array(dx[::-1]).transpose(1, 0, 2)
+  ##############################################################################
+  #                               END OF YOUR CODE                             #
+  ##############################################################################
 
-    Inputs:
-    - dh: Upstream gradients of hidden states, of shape (N, T, H)
-    - cache: Values from the forward pass
-
-    Returns a tuple of:
-    - dx: Gradient of input data of shape (N, T, D)
-    - dh0: Gradient of initial hidden state of shape (N, H)
-    - dWx: Gradient of input-to-hidden weight matrix of shape (D, 4H)
-    - dWh: Gradient of hidden-to-hidden weight matrix of shape (H, 4H)
-    - db: Gradient of biases, of shape (4H,)
-    """
-    dx, dh0, dWx, dWh, db = None, None, None, None, None
-    #############################################################################
-    # TODO: Implement the backward pass for an LSTM over an entire timeseries.  #
-    # You should use the lstm_step_backward function that you just defined.     #
-    #############################################################################
-    # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-
-    pass
-
-    # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-    ##############################################################################
-    #                               END OF YOUR CODE                             #
-    ##############################################################################
-
-    return dx, dh0, dWx, dWh, db
-
-
+  return dx, dh0, dWx, dWh, db
 def temporal_affine_forward(x, w, b):
     """Forward pass for a temporal affine layer.
     
